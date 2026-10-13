@@ -1,0 +1,25 @@
+# ESP-IDF
+build/
+sdkconfig.old
+dependencies.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+
+# 本地凭据 / 配置覆盖
+.env
+.env.local

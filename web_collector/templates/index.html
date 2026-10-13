@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSI 数据采集 · 网页版</title>
+  <link rel="stylesheet" href="/static/css/style.css?v={{ version }}">
+  <!-- Socket.IO 客户端 (CDN). 同时加载 flask_socketio 默认 polling/websocket transport. -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body>
+
+<!-- ============================================================
+     顶部: 标题栏
+     ============================================================ -->
+<header class="top-bar">
+  <div class="top-title">
+    <span class="logo">📡</span>
+    <span>CSI 数据采集 · 网页版</span>
+    <span class="version-badge" id="version-badge">{{ version }}</span>
+    <div class="top-right">
+      <img class="brand-logo" src="/logo.png" alt="logo">
+    </div>
+  </div>
+
+  <!-- ============================================================
+       顶部配置卡
+       - 行1: 路由器位置 | 数据标签
+       - 行2: CSI 保存路径 | 保存格式
+       - 行3: 采集模式 (+ 发送端选择) | 人员设置(折叠) | 环境设置(折叠)
+       - 行4: 按窗口采集 | 按帧数采集 | 同步视频
+       - 行5: 语音提示 / 延时采集
+       ============================================================ -->
+  <section class="config-card">
+    <!-- 行1: 路由器位置 | 数据标签 -->
+    <div class="row">
+      <label>路由器位置
+        <select id="cfg-router">
+          <option>桌上</option><option selected>地上</option><option>客厅电视柜</option>
+        </select>
+      </label>
+
+      <label>数据标签
+        <select id="cfg-label">
+          {% for opt in label_options %}
+          <option{% if opt == default_label %} selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <span class="hint" id="modeHint">所有 ESP 各自 ping 路由器，互为收发</span>
+    </div>
+
+    <!-- 行2: CSI 保存路径 + 保存格式 -->
+    <div class="row">
+      <label>CSI 保存路径
+        <input type="text" id="cfg-save-dir" style="width:300px">
+        <button class="btn-mini" onclick="browseSaveDir()">浏览...</button>
+      </label>
+
+      <label>保存格式
+        <select id="cfg-format">
+          <option value="npz" selected>npz</option>
+          <option value="csv">csv</option>
+        </select>
+      </label>
+    </div>
+
+    <!-- 分隔线 -->
+    <hr class="config-divider">
+
+    <!-- 行3: 人员设置 (折叠条) + 环境设置 (折叠条) - 靠左显示 -->
+    <div class="row fold-row">
+      <!-- 人员设置 (折叠条) -->
+      <span class="fold-bar" id="personBar">
+        <span class="lbl-bold">人员设置</span>
+        <span class="caret" id="personCaret">▸</span>
+        <span class="env-summary" id="personSummary">未选择人员</span>
+      </span>
+
+      <span class="fold-divider">|</span>
+
+      <!-- 环境设置 (折叠条) -->
+      <span class="fold-bar" id="envBar">
+        <span class="lbl-bold">环境设置</span>
+        <span class="caret" id="envCaret">▸</span>
+        <span class="env-summary" id="envSummary">天气:晴 · 风:微风 · 门:关 · 窗户:关 · 空调:关</span>
+      </span>
+
+      <span style="flex:1"></span>
+    </div>
+
+    <!-- 人员设置面板 (默认折叠) -->
+    <div id="personPanel" class="panel-box" style="display:none;">
+      <div id="personList" class="person-list"></div>
+      <div class="row" style="margin-top:6px;">
+        <input class="cfg-input" id="pName" placeholder="姓名，多人用逗号分隔: 张三,李四" style="width:230px;">
+        <input class="cfg-input" id="pPos" placeholder="执行位置，如: 客厅" style="width:150px;">
+        <button class="btn-mini" id="addPerson">＋ 添加人员</button>
+        <span class="hint">勾选 = 参与本次采集，文件名与元数据只记录勾选人员</span>
+      </div>
+      <div class="filedemo">文件名示例：<span id="fileDemo">--</span></div>
+    </div>
+
+    <!-- 环境设置面板 (默认折叠) -->
+    <div id="envPanel" class="panel-box" style="display:none;">
+      <div class="env-group"><span class="gname">天气</span>
+        <button class="env-chip on" data-k="天气">晴</button>
+        <button class="env-chip" data-k="天气">阴</button>
+        <button class="env-chip" data-k="天气">雨</button>
+        <button class="env-chip" data-k="天气">雪</button>
+      </div>
+      <div class="env-group"><span class="gname">风</span>
+        <button class="env-chip on" data-k="风">微风</button>
+        <button class="env-chip" data-k="风">小风</button>
+        <button class="env-chip" data-k="风">大风</button>
+      </div>
+      <div class="env-group"><span class="gname">门</span>
+        <button class="env-chip" data-k="门">开</button>
+        <button class="env-chip on" data-k="门">关</button>
+      </div>
+      <div class="env-group"><span class="gname">窗户</span>
+        <button class="env-chip" data-k="窗户">开</button>
+        <button class="env-chip on" data-k="窗户">关</button>
+      </div>
+      <div class="env-group"><span class="gname">空调</span>
+        <button class="env-chip" data-k="空调">开</button>
+        <button class="env-chip on" data-k="空调">关</button>
+      </div>
+      <div id="customGroups"></div>
+      <div class="row" style="margin-top:6px;">
+        <input class="cfg-input" id="cName" placeholder="自定义项名，如: 椅子位置" style="width:160px;">
+        <input class="cfg-input" id="cVal" placeholder="值，如: 原位 / 移动 / 撤走" style="width:170px;">
+        <button class="btn-mini" id="addEnv">＋ 添加环境项</button>
+        <span class="hint">环境项将写入 npz 元数据与文件名后缀</span>
+      </div>
+    </div>
+
+    <!-- 行4: 同步视频 (IP Webcam) + 语音/延时 (左右排布, 节省空间) -->
+    <div class="row side-by-side-cards">
+      <!-- 同步视频 (IP Webcam) -->
+      <fieldset class="mini-card half-card">
+        <legend>同步视频采集 (IP Webcam)</legend>
+        <div class="row">
+          <label><input type="checkbox" id="cfg-video-toggle"> 同时采集视频</label>
+          <label>手机IP <input type="text" id="cfg-phone-ip" placeholder="192.168.x.x:8080" style="width:130px"></label>
+          <span id="phone-dot" class="phone-dot gray">●</span>
+          <span id="phone-status" class="phone-status">未填写</span>
+          <button class="btn-mini" onclick="checkPhone()">检测</button>
+          <button class="btn-mini" onclick="openVideoDir()">打开视频目录</button>
+        </div>
+        <label class="grow">视频保存路径
+          <input type="text" id="cfg-video-dir" style="width:240px">
+        </label>
+      </fieldset>
+
+      <!-- 语音提示 / 延时采集 -->
+      <fieldset class="mini-card half-card">
+        <legend>语音提示 / 延时采集</legend>
+        <div class="row" style="gap:10px;">
+          <label>
+            <input type="checkbox" id="cfg-voice-toggle"> 启用语音提示
+          </label>
+          <label>
+            <input type="checkbox" id="cfg-delay-toggle"> 启用延时采集
+          </label>
+          <label>延时:
+            <input type="number" id="cfg-delay-sec" min="1" max="60" value="3" disabled style="width:50px">
+            秒
+          </label>
+          <button class="btn-mini" onclick="voiceTest()">🔊 试听</button>
+        </div>
+        <div class="hint">流程: 勾选延时 → 语音倒计时 → 语音播报 "XX 采集开始" → 采集 → 语音播报 "采集结束"</div>
+      </fieldset>
+    </div>
+  </section>
+</header>
+
+<!-- ============================================================
+     中部: 控制栏 (采集模式 + 采集方式 + 子配置 + 开始采集 + 停止采集 + 状态)
+     设计:
+       - 第1行: 采集模式 | 采集方式 ▼ | ▶ 开始采集 | ■ 停止采集 | 状态栏
+       - 第2行: 采集方式的子配置 (位于 采集方式 下方的子配置区)
+     CSI 渲染 按钮 已移到右侧 CSI 实时信号 窗口的右上角
+     ============================================================ -->
+<section class="control-bar">
+  <!-- 第 1 行: 主控件 -->
+  <div class="ctrl-row">
+    <!-- 1. 采集模式 (最左侧) -->
+    <label class="ctrl-group">
+      <span class="lbl-bold">采集模式</span>
+      <select id="cfg-mode" class="ctrl-select">
+        <option value="multi" selected>多发多收</option>
+        <option value="single">一发多收</option>
+      </select>
+    </label>
+
+    <span class="ctrl-sep"></span>
+
+    <!-- 2. 采集方式 (合并的下拉框) -->
+    <label class="ctrl-group ctrl-collect">
+      <span class="lbl-bold">采集方式</span>
+      <select id="collect-mode" class="ctrl-select">
+        <option value="window" selected>按窗口采集</option>
+        <option value="frame">按帧数采集</option>
+        <option value="free">自由采集</option>
+      </select>
+    </label>
+
+    <!-- 3. 开始采集 (紧贴采集方式右侧) -->
+    <button id="btn-start" class="btn-big btn-green" onclick="startCollect()">▶ 开始采集</button>
+
+    <!-- 4. 停止采集 (紧贴开始采集右侧) -->
+    <button id="btn-stop" class="btn-big btn-gray" onclick="stopCollect()" disabled>■ 停止采集</button>
+
+    <!-- 5. 状态栏 (占据 停止采集 右侧所有剩余空间, 不被裁切) -->
+    <div id="status-big" class="status-big status-idle">
+      <span class="status-base">空闲</span>
+      <span class="status-ext" id="status-ext"></span>
+    </div>
+  </div>
+
+  <!-- 第 2 行: 采集方式子配置 (与采集方式对齐, 左侧无缩进) -->
+  <div class="ctrl-subparams">
+    <span class="ctrl-subparams-label">└ 采集方式子配置</span>
+    <span id="collect-params-window" class="ctrl-params" style="display:inline-flex;">
+      <label>窗口长度(秒)
+        <input type="number" id="cfg-win-len" min="1" max="60" value="5" style="width:50px">
+      </label>
+      <label>文件数量
+        <input type="number" id="cfg-win-files" min="1" value="1" style="width:50px"> 个
+      </label>
+      <span class="hint">每采集 窗口长度 秒自动保存一个文件</span>
+    </span>
+    <span id="collect-params-frame" class="ctrl-params" style="display:none;">
+      <label>帧数
+        <input type="number" id="cfg-target-frames" min="10" value="500" style="width:60px"> 帧/设备
+      </label>
+      <label>文件数量
+        <input type="number" id="cfg-target-files" min="1" value="1" style="width:50px"> 个
+      </label>
+      <span class="hint">任一 ESP 先达帧数 → 自动保存，直到存够文件数</span>
+    </span>
+    <span id="collect-params-free" class="ctrl-params" style="display:none;">
+      <span class="hint">自由采集中无文件数量限制，按窗口长度切窗保存</span>
+    </span>
+  </div>
+</section>
+
+<!-- ============================================================
+     下部: 设备列表 (采样频率已嵌入设备工具栏左侧 + 角色列) + 实时波形
+     ============================================================ -->
+<section class="main-area">
+
+  <!-- 左: 设备管理 -->
+  <div class="device-card">
+    <div class="device-toolbar">
+      <span class="card-title">📋 设备管理</span>
+
+      <!-- ★采样频率设置: 已移至设备工具栏 (全选按钮左侧) -->
+      <span class="sr-inline">
+        <span class="lbl-bold sr-lbl">采样频率</span>
+        <input type="checkbox" id="cfg-sr-toggle" checked>
+        <span class="hint">主动 ping</span>
+        <input type="number" id="cfg-sr" min="1" max="1000" step="1" value="100" style="width:50px">
+        <span>Hz</span>
+        <span class="lbl-inline">实测:</span>
+        <span id="cfg-sr-actual" class="val-actual">-- Hz</span>
+        <span class="hint" id="pingScope">（全部设备生效）</span>
+      </span>
+
+      <span style="flex:1"></span>
+      <button class="btn-mini" onclick="selectAll(true)">全选</button>
+      <button class="btn-mini" onclick="selectAll(false)">全不选</button>
+      <button class="btn-mini btn-purple-fill" onclick="probeDevices()">🔍 搜索</button>
+    </div>
+
+    <div id="senderWarn" class="sender-warn" style="display:none;">⚠ 发送端已离线，请重新选择发送端</div>
+    <div class="hint role-hint" id="roleHint">多发多收: 所有 ESP 互为发送端 (S) 与接收端 (R)。如需切换至一发多收，请在控制栏选择。</div>
+
+    <div class="device-table-wrap">
+      <table class="device-table">
+        <thead>
+          <tr>
+            <th style="width:54px">序号</th>
+            <th style="width:78px">设备名</th>
+            <th style="width:130px">IP 地址</th>
+            <th style="width:42px">在线</th>
+            <th style="width:54px">RSSI</th>
+            <th style="width:60px">实测Hz</th>
+            <th id="thRole" style="width:74px">角色</th>
+            <th style="width:104px">位置</th>
+            <th style="width:38px">诊断</th>
+          </tr>
+        </thead>
+        <tbody id="device-tbody">
+          <tr><td colspan="8" class="empty-tip">等待设备出现... 点右上 "搜索" 主动发现</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 右: CSI 实时波形 -->
+  <div class="wave-card">
+    <div class="wave-header">
+      <div class="wave-title" id="wave-title">CSI 实时信号 (请选择设备)</div>
+      <!-- ★CSI 数据渲染 按钮 (CSI 实时信号 窗口的右上角) -->
+      <button class="btn-mini btn-orange-fill" onclick="openVisualizer()" title="拉起 CSI 可视化工具">📊 CSI 数据渲染</button>
+    </div>
+    <canvas id="wave-canvas"></canvas>
+    <div class="wave-legend">
+      <span class="legend-item"><span class="dot sc8"></span>SC 8</span>
+      <span class="legend-item"><span class="dot sc24"></span>SC 24</span>
+      <span class="legend-item"><span class="dot sc40"></span>SC 40</span>
+      <span class="legend-item"><span class="dot sc56"></span>SC 56</span>
+      <span class="legend-item hint">Y: 振幅 (dB, [-50, +50])</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     底部: 选中设备状态 (4 列)
+     ============================================================ -->
+<footer class="status-bar">
+  <div class="status-grid">
+
+    <!-- 列 1: 设备 (MAC / CSI 长) -->
+    <div class="sg-col">
+      <div class="sg-title">📟 设备</div>
+      <div class="kv"><span class="k">MAC</span><span class="v" id="st-mac">--</span></div>
+      <div class="kv"><span class="k">CSI 长</span><span class="v" id="st-csi-len">--</span></div>
+    </div>
+
+    <!-- 列 2: 数据流 -->
+    <div class="sg-col">
+      <div class="sg-title">📊 数据流</div>
+      <div class="kv"><span class="k">总包</span><span class="v" id="st-total">0</span></div>
+      <div class="kv"><span class="k">本次</span><span class="v" id="st-cur">0</span></div>
+    </div>
+
+    <!-- 列 3: 采样 -->
+    <div class="sg-col">
+      <div class="sg-title">⚙️ 采样</div>
+      <div class="kv"><span class="k">配置 Hz</span><span class="v cfg-hz" id="st-cfg-hz">--</span></div>
+      <div class="kv"><span class="k">TCP</span><span class="v" id="st-tcp">未连接</span></div>
+    </div>
+
+    <!-- 列 4: 状态 -->
+    <div class="sg-col">
+      <div class="sg-title">📡 状态</div>
+      <div class="kv"><span class="k">模式</span><span class="v" id="st-mode">空闲</span></div>
+      <div class="kv kv-wide"><span class="k">信号</span>
+        <div class="rssi-bar"><div id="st-rssi-bar" class="rssi-fill"></div></div>
+      </div>
+    </div>
+
+  </div>
+</footer>
+
+<!-- ============================================================
+     浮动倒计时遮罩
+     ============================================================ -->
+<div id="countdown-overlay" class="countdown-overlay hidden">
+  <div class="countdown-box">
+    <div class="countdown-title">⏳ 即将开始采集</div>
+    <div class="countdown-number" id="countdown-number">3</div>
+    <div class="countdown-hint" id="countdown-hint">语音播报中...</div>
+    <button class="btn-cancel" onclick="stopCollect()">取消</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     浮动消息提示
+     ============================================================ -->
+<div id="toast-host" class="toast-host"></div>
+
+<script src="/static/js/app.js?v={{ version }}"></script>
+</body>
+</html>
